@@ -38,6 +38,7 @@ const els = {
   batchForward: document.getElementById('batch-forward'),
   batchClearForward: document.getElementById('batch-clear-forward'),
   batchDelete: document.getElementById('batch-delete'),
+  deleteAll: document.getElementById('delete-all'),
   // 批量操作模态框
   batchModal: document.getElementById('batch-login-modal'),
   batchModalClose: document.getElementById('batch-modal-close'),
@@ -68,6 +69,18 @@ let page = 1, PAGE_SIZE = 20, lastCount = 0, currentData = [];
 let currentView = localStorage.getItem('mf:mailboxes:view') || 'grid';
 let searchTimeout = null, isLoading = false;
 let availableDomains = [];
+const DELETE_ALL_FETCH_SIZE = 100;
+
+function buildMailboxQueryParams(targetPage = page, pageSize = PAGE_SIZE) {
+  const params = { page: targetPage, size: pageSize };
+  const q = els.q?.value?.trim();
+  if (q) params.q = q;
+  if (els.domainFilter?.value) params.domain = els.domainFilter.value;
+  if (els.loginFilter?.value) params.login = els.loginFilter.value;
+  if (els.favoriteFilter?.value) params.favorite = els.favoriteFilter.value;
+  if (els.forwardFilter?.value) params.forward = els.forwardFilter.value;
+  return params;
+}
 
 // 加载邮箱列表
 async function load() {
@@ -79,12 +92,7 @@ async function load() {
   if (els.empty) els.empty.style.display = 'none';
   
   try {
-    const params = { page, size: PAGE_SIZE };
-    if (els.q?.value) params.q = els.q.value.trim();
-    if (els.domainFilter?.value) params.domain = els.domainFilter.value;
-    if (els.loginFilter?.value) params.login = els.loginFilter.value;
-    if (els.favoriteFilter?.value) params.favorite = els.favoriteFilter.value;
-    if (els.forwardFilter?.value) params.forward = els.forwardFilter.value;
+    const params = buildMailboxQueryParams(page, PAGE_SIZE);
     
     const data = await fetchMailboxes(params);
     const list = Array.isArray(data) ? data : (data.list || []);
@@ -387,6 +395,72 @@ async function executeBatchDelete(emails) {
   };
 }
 
+async function fetchAllFilteredMailboxAddresses() {
+  const uniqueAddresses = new Map();
+  let fetchPage = 1;
+  let totalPages = 1;
+
+  while (fetchPage <= totalPages) {
+    const params = buildMailboxQueryParams(fetchPage, DELETE_ALL_FETCH_SIZE);
+    const data = await fetchMailboxes(params);
+    const list = Array.isArray(data) ? data : (data.list || []);
+    const total = Array.isArray(data) ? list.length : (data.total ?? list.length);
+    totalPages = Math.max(1, Math.ceil(total / DELETE_ALL_FETCH_SIZE));
+
+    for (const mailbox of list) {
+      const address = String(mailbox?.address || '').trim();
+      if (!address) continue;
+      const key = address.toLowerCase();
+      if (!uniqueAddresses.has(key)) uniqueAddresses.set(key, address);
+    }
+
+    if (!list.length) break;
+    fetchPage += 1;
+  }
+
+  return Array.from(uniqueAddresses.values());
+}
+
+async function deleteAllCurrentMailboxes() {
+  if (isLoading) return;
+  if (els.deleteAll) els.deleteAll.disabled = true;
+
+  try {
+    const addresses = await fetchAllFilteredMailboxAddresses();
+    if (!addresses.length) {
+      showToast('当前无可删除邮箱', 'info');
+      return;
+    }
+
+    let successCount = 0;
+    let failureCount = 0;
+    for (const address of addresses) {
+      try {
+        const response = await apiDeleteMailbox(address);
+        if (response.ok) {
+          successCount += 1;
+        } else {
+          failureCount += 1;
+        }
+      } catch (error) {
+        console.error('删除全部失败:', address, error);
+        failureCount += 1;
+      }
+    }
+
+    if (failureCount > 0) {
+      showToast(`删除全部完成：成功 ${successCount}，失败 ${failureCount}`, 'error');
+    } else {
+      showToast(`删除全部完成：成功 ${successCount}`, 'success');
+    }
+
+    page = 1;
+    await load();
+  } finally {
+    if (els.deleteAll) els.deleteAll.disabled = false;
+  }
+}
+
 // 执行批量操作
 async function executeBatchAction() {
   const emails = parseEmails(els.batchEmailsInput?.value || '');
@@ -491,6 +565,7 @@ els.batchClearForward?.addEventListener('click', () => openBatchModal('clear-for
 
 // 批量操作模态框事件
 els.batchDelete?.addEventListener('click', () => openBatchModal('delete', '批量删除邮箱', '🗑️', '输入要删除的邮箱地址（每行一个或用逗号分隔）：'));
+els.deleteAll?.addEventListener('click', deleteAllCurrentMailboxes);
 els.batchModalClose?.addEventListener('click', closeBatchModal);
 els.batchModalCancel?.addEventListener('click', closeBatchModal);
 els.batchEmailsInput?.addEventListener('input', updateBatchCount);
