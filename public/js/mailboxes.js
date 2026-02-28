@@ -37,6 +37,7 @@ const els = {
   batchUnfavorite: document.getElementById('batch-unfavorite'),
   batchForward: document.getElementById('batch-forward'),
   batchClearForward: document.getElementById('batch-clear-forward'),
+  batchDelete: document.getElementById('batch-delete'),
   // 批量操作模态框
   batchModal: document.getElementById('batch-login-modal'),
   batchModalClose: document.getElementById('batch-modal-close'),
@@ -362,6 +363,30 @@ function updateBatchCount() {
   }
 }
 
+async function executeBatchDelete(emails) {
+  const confirmed = confirm(`确认批量删除 ${emails.length} 个邮箱？此操作不可恢复。`);
+  if (!confirmed) {
+    return { cancelled: true, successCount: 0, failureCount: 0 };
+  }
+
+  const results = await Promise.all(emails.map(async (address) => {
+    try {
+      const response = await apiDeleteMailbox(address);
+      return response.ok;
+    } catch (error) {
+      console.error('批量删除失败:', address, error);
+      return false;
+    }
+  }));
+
+  const successCount = results.filter(Boolean).length;
+  return {
+    cancelled: false,
+    successCount,
+    failureCount: results.length - successCount
+  };
+}
+
 // 执行批量操作
 async function executeBatchAction() {
   const emails = parseEmails(els.batchEmailsInput?.value || '');
@@ -412,6 +437,20 @@ async function executeBatchAction() {
           body: JSON.stringify({ addresses: emails, forward_to: null })
         });
         break;
+      case 'delete': {
+        const deleteResult = await executeBatchDelete(emails);
+        if (deleteResult.cancelled) {
+          return;
+        }
+        if (deleteResult.failureCount > 0) {
+          showToast(`批量删除完成：成功 ${deleteResult.successCount}，失败 ${deleteResult.failureCount}`, 'error');
+        } else {
+          showToast(`批量删除完成：成功 ${deleteResult.successCount}`, 'success');
+        }
+        closeBatchModal();
+        load();
+        return;
+      }
     }
     showToast('批量操作完成', 'success');
     closeBatchModal();
@@ -451,6 +490,7 @@ els.batchForward?.addEventListener('click', () => openBatchModal('forward', '批
 els.batchClearForward?.addEventListener('click', () => openBatchModal('clear-forward', '批量清除转发', '🚫', '输入要清除转发的邮箱地址（每行一个或用逗号分隔）：'));
 
 // 批量操作模态框事件
+els.batchDelete?.addEventListener('click', () => openBatchModal('delete', '批量删除邮箱', '🗑️', '输入要删除的邮箱地址（每行一个或用逗号分隔）：'));
 els.batchModalClose?.addEventListener('click', closeBatchModal);
 els.batchModalCancel?.addEventListener('click', closeBatchModal);
 els.batchEmailsInput?.addEventListener('input', updateBatchCount);
