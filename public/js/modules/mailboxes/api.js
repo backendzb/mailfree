@@ -66,6 +66,20 @@ export async function deleteMailbox(address) {
 }
 
 /**
+ * 批量按地址删除邮箱
+ * @param {Array<string>} addresses - 邮箱地址列表
+ * @returns {Promise<object>}
+ */
+export async function batchDeleteByAddress(addresses) {
+  const r = await api('/api/mailboxes/batch-delete-by-address', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ addresses })
+  });
+  return r.json();
+}
+
+/**
  * 重置邮箱密码（恢复为默认密码）
  * @param {string} address - 邮箱地址
  * @returns {Promise<Response>}
@@ -151,6 +165,7 @@ export default {
   loadMailboxes,
   loadDomains,
   deleteMailbox,
+  batchDeleteByAddress,
   resetPassword,
   changePassword,
   toggleLogin,

@@ -5,7 +5,7 @@
 
 import { getCurrentUserKey } from './storage.js';
 import { openForwardDialog, toggleFavorite, batchSetFavorite, injectDialogStyles } from './mailbox-settings.js';
-import { api, loadMailboxes as fetchMailboxes, loadDomains as fetchDomains, deleteMailbox as apiDeleteMailbox, toggleLogin as apiToggleLogin, batchToggleLogin, resetPassword as apiResetPassword, changePassword as apiChangePassword } from './modules/mailboxes/api.js';
+import { api, loadMailboxes as fetchMailboxes, loadDomains as fetchDomains, deleteMailbox as apiDeleteMailbox, batchDeleteByAddress as apiBatchDeleteByAddress, toggleLogin as apiToggleLogin, batchToggleLogin, resetPassword as apiResetPassword, changePassword as apiChangePassword } from './modules/mailboxes/api.js';
 import { formatTime, escapeHtml, generateSkeleton, renderGrid, renderList } from './modules/mailboxes/render.js';
 
 injectDialogStyles();
@@ -70,6 +70,36 @@ let currentView = localStorage.getItem('mf:mailboxes:view') || 'grid';
 let searchTimeout = null, isLoading = false;
 let availableDomains = [];
 const DELETE_ALL_FETCH_SIZE = 100;
+const BATCH_DELETE_SIZE = 100;
+
+function chunkArray(items, size) {
+  const chunks = [];
+  for (let i = 0; i < items.length; i += size) {
+    chunks.push(items.slice(i, i + size));
+  }
+  return chunks;
+}
+
+async function performBatchDeleteByAddress(addresses) {
+  const chunks = chunkArray(addresses, BATCH_DELETE_SIZE);
+  let successCount = 0;
+  let failureCount = 0;
+
+  for (const batch of chunks) {
+    try {
+      const result = await apiBatchDeleteByAddress(batch);
+      const batchSuccess = Number(result?.success_count || 0);
+      const batchFail = Number(result?.fail_count || 0);
+      successCount += batchSuccess;
+      failureCount += batchFail;
+    } catch (error) {
+      console.error('批量删除失败:', error);
+      failureCount += batch.length;
+    }
+  }
+
+  return { successCount, failureCount };
+}
 
 function buildMailboxQueryParams(targetPage = page, pageSize = PAGE_SIZE) {
   const params = { page: targetPage, size: pageSize };
@@ -377,21 +407,11 @@ async function executeBatchDelete(emails) {
     return { cancelled: true, successCount: 0, failureCount: 0 };
   }
 
-  const results = await Promise.all(emails.map(async (address) => {
-    try {
-      const response = await apiDeleteMailbox(address);
-      return response.ok;
-    } catch (error) {
-      console.error('批量删除失败:', address, error);
-      return false;
-    }
-  }));
-
-  const successCount = results.filter(Boolean).length;
+  const { successCount, failureCount } = await performBatchDeleteByAddress(emails);
   return {
     cancelled: false,
     successCount,
-    failureCount: results.length - successCount
+    failureCount
   };
 }
 
@@ -432,21 +452,7 @@ async function deleteAllCurrentMailboxes() {
       return;
     }
 
-    let successCount = 0;
-    let failureCount = 0;
-    for (const address of addresses) {
-      try {
-        const response = await apiDeleteMailbox(address);
-        if (response.ok) {
-          successCount += 1;
-        } else {
-          failureCount += 1;
-        }
-      } catch (error) {
-        console.error('删除全部失败:', address, error);
-        failureCount += 1;
-      }
-    }
+    const { successCount, failureCount } = await performBatchDeleteByAddress(addresses);
 
     if (failureCount > 0) {
       showToast(`删除全部完成：成功 ${successCount}，失败 ${failureCount}`, 'error');

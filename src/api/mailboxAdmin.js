@@ -241,6 +241,128 @@ export async function handleMailboxAdminApi(request, db, url, path, options) {
     }
   }
 
+  // 批量按地址删除邮箱
+  if (path === '/api/mailboxes/batch-delete-by-address' && request.method === 'POST') {
+    if (isMock) return errorResponse('演示模式不可操作', 403);
+    try {
+      const body = await request.json();
+      const addresses = body.addresses || [];
+
+      if (!Array.isArray(addresses) || addresses.length === 0) {
+        return errorResponse('缺少 addresses 参数或地址列表为空', 400);
+      }
+
+      if (addresses.length > 100) {
+        return errorResponse('单次最多处理100个邮箱', 400);
+      }
+
+      const strictAdmin = isStrictAdmin(request, options);
+      let operatorUserId = 0;
+      if (!strictAdmin) {
+        const payload = getJwtPayload(request, options);
+        if (!payload || payload.role !== 'admin' || !payload.userId) return errorResponse('Forbidden', 403);
+        operatorUserId = Number(payload.userId);
+      }
+
+      const addressMap = new Map();
+      for (const item of addresses) {
+        const normalized = String(item || '').trim().toLowerCase();
+        if (!normalized) continue;
+        if (!addressMap.has(normalized)) {
+          addressMap.set(normalized, String(item || '').trim() || normalized);
+        }
+      }
+
+      const normalizedAddresses = Array.from(addressMap.keys());
+      if (!normalizedAddresses.length) {
+        return errorResponse('地址列表为空', 400);
+      }
+
+      const mailboxMap = new Map();
+      const placeholders = normalizedAddresses.map(() => '?').join(',');
+      const mailboxRes = await db.prepare(
+        `SELECT id, address FROM mailboxes WHERE address IN (${placeholders})`
+      ).bind(...normalizedAddresses).all();
+      for (const row of (mailboxRes.results || [])) {
+        mailboxMap.set(String(row.address || '').toLowerCase(), { id: Number(row.id), address: row.address });
+      }
+
+      const ownedMailboxIds = new Set();
+      if (!strictAdmin && mailboxMap.size > 0) {
+        const mailboxIds = Array.from(mailboxMap.values()).map(item => item.id);
+        const ownPlaceholders = mailboxIds.map(() => '?').join(',');
+        const ownRes = await db.prepare(
+          `SELECT mailbox_id FROM user_mailboxes WHERE user_id = ? AND mailbox_id IN (${ownPlaceholders})`
+        ).bind(operatorUserId, ...mailboxIds).all();
+        for (const row of (ownRes.results || [])) {
+          ownedMailboxIds.add(Number(row.mailbox_id));
+        }
+      }
+
+      const results = [];
+      const deletable = [];
+      for (const [normalizedAddress, originalAddress] of addressMap.entries()) {
+        const mailbox = mailboxMap.get(normalizedAddress);
+        if (!mailbox) {
+          results.push({ address: originalAddress, success: false, error: '邮箱不存在' });
+          continue;
+        }
+        if (!strictAdmin && !ownedMailboxIds.has(mailbox.id)) {
+          results.push({ address: originalAddress, success: false, error: 'Forbidden' });
+          continue;
+        }
+        deletable.push(mailbox);
+      }
+
+      const chunkSize = 100;
+      const chunks = [];
+      for (let i = 0; i < deletable.length; i += chunkSize) {
+        chunks.push(deletable.slice(i, i + chunkSize));
+      }
+
+      if (chunks.length) {
+        try {
+          await db.exec('BEGIN');
+
+          for (const chunk of chunks) {
+            const ids = chunk.map(item => item.id);
+            const ph = ids.map(() => '?').join(',');
+            await db.prepare(`DELETE FROM messages WHERE mailbox_id IN (${ph})`).bind(...ids).run();
+          }
+
+          for (const chunk of chunks) {
+            const ids = chunk.map(item => item.id);
+            const ph = ids.map(() => '?').join(',');
+            await db.prepare(`DELETE FROM mailboxes WHERE id IN (${ph})`).bind(...ids).run();
+          }
+
+          await db.exec('COMMIT');
+        } catch (e) {
+          try { await db.exec('ROLLBACK'); } catch (_) { }
+          return errorResponse('批量删除失败', 500);
+        }
+
+        for (const mailbox of deletable) {
+          invalidateMailboxCache(mailbox.address);
+          results.push({ address: mailbox.address, success: true, deleted: true });
+        }
+        invalidateSystemStatCache('total_mailboxes');
+      }
+
+      const successCount = results.filter(item => item.success).length;
+      const failCount = results.length - successCount;
+      return Response.json({
+        success: true,
+        success_count: successCount,
+        fail_count: failCount,
+        total: results.length,
+        results
+      });
+    } catch (e) {
+      return errorResponse('操作失败: ' + e.message, 500);
+    }
+  }
+
   // ====== 邮箱设置：转发和收藏 ======
   if (path === '/api/mailbox/forward' && request.method === 'POST') {
     if (isMock) return errorResponse('演示模式不可操作', 403);
