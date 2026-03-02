@@ -76,7 +76,20 @@ export async function batchDeleteByAddress(addresses) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ addresses })
   });
-  return r.json();
+  const text = await r.text();
+  let data = {};
+  try {
+    data = text ? JSON.parse(text) : {};
+  } catch (_) {
+    if (!r.ok) throw new Error(text || `HTTP ${r.status}`);
+    throw new Error('批量删除接口返回格式异常');
+  }
+
+  if (!r.ok) {
+    throw new Error(data?.error || data?.message || text || `HTTP ${r.status}`);
+  }
+
+  return data;
 }
 
 /**

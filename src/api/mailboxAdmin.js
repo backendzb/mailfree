@@ -322,8 +322,6 @@ export async function handleMailboxAdminApi(request, db, url, path, options) {
 
       if (chunks.length) {
         try {
-          await db.exec('BEGIN');
-
           for (const chunk of chunks) {
             const ids = chunk.map(item => item.id);
             const ph = ids.map(() => '?').join(',');
@@ -335,11 +333,8 @@ export async function handleMailboxAdminApi(request, db, url, path, options) {
             const ph = ids.map(() => '?').join(',');
             await db.prepare(`DELETE FROM mailboxes WHERE id IN (${ph})`).bind(...ids).run();
           }
-
-          await db.exec('COMMIT');
         } catch (e) {
-          try { await db.exec('ROLLBACK'); } catch (_) { }
-          return errorResponse('批量删除失败', 500);
+          return errorResponse('批量删除失败: ' + e.message, 500);
         }
 
         for (const mailbox of deletable) {
