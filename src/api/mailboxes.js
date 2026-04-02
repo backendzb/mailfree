@@ -16,6 +16,21 @@ import {
 import { handleMailboxAdminApi } from './mailboxAdmin.js';
 
 /**
+ * 生成随机子域名：将域名中的 * 替换为 8 位随机字符串
+ * @param {string} domain - 域名，可能包含 * 通配符
+ * @returns {string} 处理后的域名
+ */
+function resolveWildcardDomain(domain) {
+  if (!domain.includes('*')) return domain;
+  const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
+  let rand = '';
+  for (let i = 0; i < 8; i++) {
+    rand += chars[Math.floor(Math.random() * chars.length)];
+  }
+  return domain.replace('*', rand);
+}
+
+/**
  * 处理邮箱管理相关 API
  * @param {Request} request - HTTP 请求
  * @param {object} db - 数据库连接
@@ -69,13 +84,13 @@ export async function handleMailboxesApi(request, db, mailDomains, url, path, op
         const valid = /^[a-z0-9._-]{1,64}$/i.test(local);
         if (!valid) return errorResponse('非法用户名', 400);
         const domains = MOCK_DOMAINS;
-        // 支持自定义 domain 参数，优先使用；否则走 domainIndex
+        // 支持自定义 domain 参数，优先使用；否则走 domainIndex；支持 * 通配符随机子域名
         let chosenDomain;
         if (body.domain) {
-          chosenDomain = String(body.domain).trim().toLowerCase();
+          chosenDomain = resolveWildcardDomain(String(body.domain).trim().toLowerCase());
         } else {
           const domainIdx = Math.max(0, Math.min(domains.length - 1, Number(body.domainIndex || 0)));
-          chosenDomain = domains[domainIdx] || domains[0];
+          chosenDomain = resolveWildcardDomain(domains[domainIdx] || domains[0]);
         }
         const email = `${local}@${chosenDomain}`;
         return Response.json({ email, expires: Date.now() + 3600000 });
@@ -88,13 +103,13 @@ export async function handleMailboxesApi(request, db, mailDomains, url, path, op
       const valid = /^[a-z0-9._-]{1,64}$/i.test(local);
       if (!valid) return errorResponse('非法用户名', 400);
       const domains = Array.isArray(mailDomains) ? mailDomains : [(mailDomains || 'temp.example.com')];
-      // 支持自定义 domain 参数，优先使用；否则走 domainIndex
+      // 支持自定义 domain 参数，优先使用；否则走 domainIndex；支持 * 通配符随机子域名
       let chosenDomain;
       if (body.domain) {
-        chosenDomain = String(body.domain).trim().toLowerCase();
+        chosenDomain = resolveWildcardDomain(String(body.domain).trim().toLowerCase());
       } else {
         const domainIdx = Math.max(0, Math.min(domains.length - 1, Number(body.domainIndex || 0)));
-        chosenDomain = domains[domainIdx] || domains[0];
+        chosenDomain = resolveWildcardDomain(domains[domainIdx] || domains[0]);
       }
       const email = `${local}@${chosenDomain}`;
       
