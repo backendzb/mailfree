@@ -69,21 +69,33 @@ export async function handleMailboxesApi(request, db, mailDomains, url, path, op
         const valid = /^[a-z0-9._-]{1,64}$/i.test(local);
         if (!valid) return errorResponse('非法用户名', 400);
         const domains = MOCK_DOMAINS;
-        const domainIdx = Math.max(0, Math.min(domains.length - 1, Number(body.domainIndex || 0)));
-        const chosenDomain = domains[domainIdx] || domains[0];
+        // 支持自定义 domain 参数，优先使用；否则走 domainIndex
+        let chosenDomain;
+        if (body.domain) {
+          chosenDomain = String(body.domain).trim().toLowerCase();
+        } else {
+          const domainIdx = Math.max(0, Math.min(domains.length - 1, Number(body.domainIndex || 0)));
+          chosenDomain = domains[domainIdx] || domains[0];
+        }
         const email = `${local}@${chosenDomain}`;
         return Response.json({ email, expires: Date.now() + 3600000 });
       } catch (_) { return errorResponse('Bad Request', 400); }
     }
-    
+
     try {
       const body = await request.json();
       const local = String(body.local || '').trim().toLowerCase();
       const valid = /^[a-z0-9._-]{1,64}$/i.test(local);
       if (!valid) return errorResponse('非法用户名', 400);
       const domains = Array.isArray(mailDomains) ? mailDomains : [(mailDomains || 'temp.example.com')];
-      const domainIdx = Math.max(0, Math.min(domains.length - 1, Number(body.domainIndex || 0)));
-      const chosenDomain = domains[domainIdx] || domains[0];
+      // 支持自定义 domain 参数，优先使用；否则走 domainIndex
+      let chosenDomain;
+      if (body.domain) {
+        chosenDomain = String(body.domain).trim().toLowerCase();
+      } else {
+        const domainIdx = Math.max(0, Math.min(domains.length - 1, Number(body.domainIndex || 0)));
+        chosenDomain = domains[domainIdx] || domains[0];
+      }
       const email = `${local}@${chosenDomain}`;
       
       try {
